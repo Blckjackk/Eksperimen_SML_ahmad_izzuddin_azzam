@@ -1,1 +1,1 @@
-https://hub.docker.com/r/Blckjackk/obesity-ml-model
+https://hub.docker.com/r/blckjackk14/obesity-ml-model
