@@ -1,0 +1,45 @@
+name: Data Preprocessing Workflow
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+  workflow_dispatch:
+
+jobs:
+  preprocess:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout Repository
+      uses: actions/checkout@v3
+
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.10'
+
+    - name: Install Dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+
+    - name: Run Data Preprocessing Automation
+      run: |
+        python preprocessing/automate_ahmad_izzuddin_azzam.py
+
+    - name: Verify Preprocessed Datasets
+      run: |
+        ls -la preprocessing/obesity_preprocessing/
+        test -f preprocessing/obesity_preprocessing/X_train.csv
+        test -f preprocessing/obesity_preprocessing/X_test.csv
+        test -f preprocessing/obesity_preprocessing/y_train.csv
+        test -f preprocessing/obesity_preprocessing/y_test.csv
+        echo "Preprocessing output verification successful!"
+
+    - name: Upload Processed Data Artifacts
+      uses: actions/upload-artifact@v3
+      with:
+        name: preprocessed-dataset
+        path: preprocessing/obesity_preprocessing/
