@@ -2,11 +2,16 @@ import os
 import json
 import pandas as pd
 import numpy as np
+
+# Set backend matplotlib agar tidak error saat render grafik
+import matplotlib
+matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 import seaborn as sns
 
 import mlflow
 import mlflow.sklearn
+import dagshub
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.metrics import (
     accuracy_score,
@@ -17,42 +22,33 @@ from sklearn.metrics import (
     classification_report
 )
 
-# Izinkan file store lokal jika fallback digunakan
-os.environ["MLFLOW_ALLOW_FILE_STORE"] = "true"
-
 # --- KONFIGURASI DAGSHUB / MLFLOW ---
-DAGSHUB_USERNAME = os.getenv("DAGSHUB_USERNAME", "Blckjackk")
-DAGSHUB_REPO_NAME = os.getenv("DAGSHUB_REPO_NAME", "Eksperimen_SML_ahmad_izzuddin_azzam")
-DAGSHUB_TOKEN = os.getenv("MLFLOW_TRACKING_PASSWORD", os.getenv("DAGSHUB_TOKEN", ""))
+DAGSHUB_USERNAME = "Blckjackk"
+DAGSHUB_REPO_NAME = "Eksperimen_SML_ahmad_izzuddin_azzam"
 
 def setup_mlflow():
     """
-    Mengatur MLflow Tracking URI: DagsHub Remote jika token tersedia, atau Local Fallback jika offline/unauthenticated.
+    Menghubungkan MLflow Tracking URI secara otomatis ke DagsHub Remote.
     """
-    if DAGSHUB_TOKEN:
-        os.environ['MLFLOW_TRACKING_USERNAME'] = DAGSHUB_USERNAME
-        os.environ['MLFLOW_TRACKING_PASSWORD'] = DAGSHUB_TOKEN
-        remote_uri = f"https://dagshub.com/{DAGSHUB_USERNAME}/{DAGSHUB_REPO_NAME}.mlflow"
-        mlflow.set_tracking_uri(remote_uri)
-        print(f"Tracking MLflow terhubung ke DagsHub Remote: {remote_uri}")
-    else:
-        # Fallback ke database SQLite lokal
-        mlflow.set_tracking_uri("sqlite:///mlflow.db")
-        print("Tracking MLflow menggunakan penyimpanan lokal (sqlite:///mlflow.db).")
-        print("Petunjuk: Set environment variable MLFLOW_TRACKING_PASSWORD='TOKEN_DAGSHUB' untuk push ke DagsHub Remote.")
-        
-    try:
-        mlflow.set_experiment("Baseline_Model_Obesity")
-    except Exception as e:
-        print(f"Warning: Gagal terhubung ke remote ({e}). Mengalihkan ke SQLite MLflow lokal.")
-        mlflow.set_tracking_uri("sqlite:///mlflow.db")
-        mlflow.set_experiment("Baseline_Model_Obesity")
+    print(f"Menghubungkan ke DagsHub Remote: {DAGSHUB_USERNAME}/{DAGSHUB_REPO_NAME}...")
+    
+    # Inisialisasi DagsHub (Otomatis handle login/OAuth & MLflow tracking URI)
+    dagshub.init(
+        repo_owner=DAGSHUB_USERNAME,
+        repo_name=DAGSHUB_REPO_NAME,
+        mlflow=True
+    )
+    
+    mlflow.set_experiment("Baseline_Model_Obesity")
+    print("✅ Berhasil terhubung ke MLflow Remote DagsHub!")
 
 def load_data():
     """
     Memuat dataset yang sudah dipreprocess dari folder obesity_preprocessing.
     """
     base_dir = os.path.dirname(os.path.abspath(__file__))
+    
+    # Cek lokasi folder preprocessing
     data_dir = os.path.join(base_dir, "obesity_preprocessing")
     if not os.path.exists(data_dir):
         data_dir = os.path.join(base_dir, "..", "preprocessing", "obesity_preprocessing")
@@ -66,9 +62,7 @@ def load_data():
     return X_train, y_train, X_test, y_test
 
 def create_confusion_matrix_plot(y_test, y_pred, output_path="confusion_matrix.png"):
-    """
-    Membuat dan menyimpan plot confusion matrix.
-    """
+    """Membuat dan menyimpan plot confusion matrix."""
     plt.figure(figsize=(8, 6))
     cm = confusion_matrix(y_test, y_pred)
     sns.heatmap(cm, annot=True, fmt='d', cmap='Blues')
@@ -81,9 +75,7 @@ def create_confusion_matrix_plot(y_test, y_pred, output_path="confusion_matrix.p
     return output_path
 
 def create_feature_importance_plot(model, feature_names, output_path="feature_importance.png"):
-    """
-    Membuat dan menyimpan plot 10 fitur terpenting.
-    """
+    """Membuat dan menyimpan plot 10 fitur terpenting."""
     importances = model.feature_importances_
     indices = np.argsort(importances)[::-1][:10]
     
@@ -122,41 +114,41 @@ def main():
         rec = recall_score(y_test, y_pred, average='weighted')
         f1 = f1_score(y_test, y_pred, average='weighted')
         
-        # 1. MANUAL LOGGING Hyperparameters ke MLflow
+        # 1. Manual Logging Hyperparameters
         mlflow.log_param("n_estimators", n_estimators)
         mlflow.log_param("max_depth", max_depth)
         mlflow.log_param("random_state", random_state)
         mlflow.log_param("model_type", "RandomForestClassifier")
         
-        # 2. MANUAL LOGGING Metrics ke MLflow
+        # 2. Manual Logging Metrics
         mlflow.log_metric("accuracy", acc)
         mlflow.log_metric("precision", prec)
         mlflow.log_metric("recall", rec)
         mlflow.log_metric("f1_score", f1)
         
-        # 3. MANUAL LOGGING Artefak Gambar (Tambahan Syarat Advance: minimal 2 artefak gambar)
+        # 3. Manual Logging Artefak Gambar
         cm_path = create_confusion_matrix_plot(y_test, y_pred, "confusion_matrix.png")
         fi_path = create_feature_importance_plot(model, X_train.columns, "feature_importance.png")
         
         mlflow.log_artifact(cm_path)
         mlflow.log_artifact(fi_path)
         
-        # Simpan Laporan Klasifikasi JSON sebagai artefak tambahan
+        # Simpan Laporan Klasifikasi JSON
         report_dict = classification_report(y_test, y_pred, output_dict=True)
         report_path = "classification_report.json"
         with open(report_path, "w") as f:
             json.dump(report_dict, f, indent=4)
         mlflow.log_artifact(report_path)
         
-        # 4. MANUAL LOGGING Model Artifact
-        mlflow.sklearn.log_model(model, "model")
+        # 4. Manual Logging Model Artifact
+        mlflow.sklearn.log_model(model, name="model")
         
-        # Hapus file temporary lokal
+        # Hapus file temporary lokal setelah terupload ke MLflow
         for tmp_file in [cm_path, fi_path, report_path]:
             if os.path.exists(tmp_file):
                 os.remove(tmp_file)
                 
-        print(f"✅ Baseline Run Selesai dengan Sukses!")
+        print(f"✅ Baseline Run Selesai & Terkirim ke DagsHub!")
         print(f"   Accuracy:  {acc:.4f}")
         print(f"   Precision: {prec:.4f}")
         print(f"   Recall:    {rec:.4f}")

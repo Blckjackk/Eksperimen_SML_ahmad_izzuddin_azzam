@@ -1,0 +1,121 @@
+import os
+import json
+import pandas as pd
+import numpy as np
+
+# Set backend matplotlib agar tidak error saat render grafik di CI headless
+import matplotlib
+matplotlib.use('Agg')
+import matplotlib.pyplot as plt
+import seaborn as sns
+
+import mlflow
+import mlflow.sklearn
+import dagshub
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.metrics import (
+    accuracy_score,
+    precision_score,
+    recall_score,
+    f1_score,
+    confusion_matrix,
+    classification_report
+)
+
+os.environ["MLFLOW_ALLOW_FILE_STORE"] = "true"
+
+DAGSHUB_USERNAME = "Blckjackk"
+DAGSHUB_REPO_NAME = "Eksperimen_SML_ahmad_izzuddin_azzam"
+
+def setup_mlflow():
+    # Hapus MLFLOW_RUN_ID dari env jika ada agar tidak conflict dengan DagsHub URI
+    if "MLFLOW_RUN_ID" in os.environ:
+        os.environ.pop("MLFLOW_RUN_ID", None)
+        
+    token = os.getenv("MLFLOW_TRACKING_PASSWORD", os.getenv("DAGSHUB_TOKEN", ""))
+    if token:
+        os.environ['MLFLOW_TRACKING_USERNAME'] = DAGSHUB_USERNAME
+        os.environ['MLFLOW_TRACKING_PASSWORD'] = token
+        remote_uri = f"https://dagshub.com/{DAGSHUB_USERNAME}/{DAGSHUB_REPO_NAME}.mlflow"
+        mlflow.set_tracking_uri(remote_uri)
+        print(f"Tracking MLflow terhubung ke DagsHub Remote: {remote_uri}")
+    else:
+        try:
+            dagshub.init(
+                repo_owner=DAGSHUB_USERNAME,
+                repo_name=DAGSHUB_REPO_NAME,
+                mlflow=True
+            )
+            print("Berhasil menginisialisasi DagsHub MLflow.")
+        except Exception as e:
+            print(f"Warning: Offline / Unauthenticated DagsHub ({e}). Menggunakan SQLite MLflow lokal.")
+            mlflow.set_tracking_uri("sqlite:///mlflow.db")
+            
+    try:
+        mlflow.set_experiment("CI_Retraining_Obesity")
+    except Exception:
+        mlflow.set_tracking_uri("sqlite:///mlflow.db")
+        mlflow.set_experiment("CI_Retraining_Obesity")
+
+def load_data():
+    base_dir = os.path.dirname(os.path.abspath(__file__))
+    data_dir = os.path.join(base_dir, "obesity_preprocessing")
+    if not os.path.exists(data_dir):
+        data_dir = os.path.join(base_dir, "..", "..", "preprocessing", "obesity_preprocessing")
+        
+    print(f"Memuat dataset dari: {data_dir}")
+    X_train = pd.read_csv(os.path.join(data_dir, "X_train.csv"))
+    X_test = pd.read_csv(os.path.join(data_dir, "X_test.csv"))
+    y_train = pd.read_csv(os.path.join(data_dir, "y_train.csv")).values.ravel()
+    y_test = pd.read_csv(os.path.join(data_dir, "y_test.csv")).values.ravel()
+    
+    return X_train, y_train, X_test, y_test
+
+def main():
+    setup_mlflow()
+    X_train, y_train, X_test, y_test = load_data()
+    
+    with mlflow.start_run(run_name="CI_Automated_Retraining") as run:
+        run_id = run.info.run_id
+        
+        # Simpan Run ID ke file lokal agar dibaca oleh GitHub Actions Workflow
+        with open("run_id.txt", "w") as f:
+            f.write(run_id)
+            
+        print(f"Run ID berhasil dibuat: {run_id}")
+        
+        n_estimators = 100
+        max_depth = 10
+        random_state = 42
+        
+        print("Melatih model Random Forest (CI Retraining)...")
+        model = RandomForestClassifier(
+            n_estimators=n_estimators,
+            max_depth=max_depth,
+            random_state=random_state
+        )
+        model.fit(X_train, y_train)
+        
+        y_pred = model.predict(X_test)
+        
+        acc = accuracy_score(y_test, y_pred)
+        prec = precision_score(y_test, y_pred, average='weighted')
+        rec = recall_score(y_test, y_pred, average='weighted')
+        f1 = f1_score(y_test, y_pred, average='weighted')
+        
+        mlflow.log_param("n_estimators", n_estimators)
+        mlflow.log_param("max_depth", max_depth)
+        mlflow.log_param("random_state", random_state)
+        
+        mlflow.log_metric("accuracy", acc)
+        mlflow.log_metric("precision", prec)
+        mlflow.log_metric("recall", rec)
+        mlflow.log_metric("f1_score", f1)
+        
+        # Simpan model artifact
+        mlflow.sklearn.log_model(model, name="model")
+        
+        print(f"✅ Retraining CI Selesai! Run ID: {run_id} | Accuracy: {acc:.4f}")
+
+if __name__ == "__main__":
+    main()
