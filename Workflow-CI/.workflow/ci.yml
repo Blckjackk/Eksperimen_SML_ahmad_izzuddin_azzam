@@ -27,7 +27,7 @@ jobs:
       - name: Run MLflow Project (Retrain Model)
         run: |
           cd Workflow-CI/MLProject
-          mlflow run . --no-conda
+          mlflow run . --env-manager local
 
       - name: Upload Artifacts to GitHub
         uses: actions/upload-artifact@v4
