@@ -1,37 +1,22 @@
 import os
 import json
+import shutil
 import pandas as pd
 import numpy as np
-
-# Set backend matplotlib agar tidak error saat render grafik di CI headless
 import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
-import seaborn as sns
 
 import mlflow
 import mlflow.sklearn
 import dagshub
 from sklearn.ensemble import RandomForestClassifier
-from sklearn.metrics import (
-    accuracy_score,
-    precision_score,
-    recall_score,
-    f1_score,
-    confusion_matrix,
-    classification_report
-)
-
-os.environ["MLFLOW_ALLOW_FILE_STORE"] = "true"
+from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score
 
 DAGSHUB_USERNAME = "Blckjackk"
 DAGSHUB_REPO_NAME = "Eksperimen_SML_ahmad_izzuddin_azzam"
 
 def setup_mlflow():
-    # Hapus MLFLOW_RUN_ID dari env jika ada agar tidak conflict dengan DagsHub URI
-    if "MLFLOW_RUN_ID" in os.environ:
-        os.environ.pop("MLFLOW_RUN_ID", None)
-        
     token = os.getenv("MLFLOW_TRACKING_PASSWORD", os.getenv("DAGSHUB_TOKEN", ""))
     if token:
         os.environ['MLFLOW_TRACKING_USERNAME'] = DAGSHUB_USERNAME
@@ -49,6 +34,7 @@ def setup_mlflow():
             print("Berhasil menginisialisasi DagsHub MLflow.")
         except Exception as e:
             print(f"Warning: Offline / Unauthenticated DagsHub ({e}). Menggunakan SQLite MLflow lokal.")
+            os.environ["MLFLOW_ALLOW_FILE_STORE"] = "true"
             mlflow.set_tracking_uri("sqlite:///mlflow.db")
             
     try:
@@ -78,22 +64,11 @@ def main():
     with mlflow.start_run(run_name="CI_Automated_Retraining") as run:
         run_id = run.info.run_id
         
-        # Simpan Run ID ke file lokal agar dibaca oleh GitHub Actions Workflow
+        # Simpan Run ID
         with open("run_id.txt", "w") as f:
             f.write(run_id)
             
-        print(f"Run ID berhasil dibuat: {run_id}")
-        
-        n_estimators = 100
-        max_depth = 10
-        random_state = 42
-        
-        print("Melatih model Random Forest (CI Retraining)...")
-        model = RandomForestClassifier(
-            n_estimators=n_estimators,
-            max_depth=max_depth,
-            random_state=random_state
-        )
+        model = RandomForestClassifier(n_estimators=100, max_depth=10, random_state=42)
         model.fit(X_train, y_train)
         
         y_pred = model.predict(X_test)
@@ -103,17 +78,22 @@ def main():
         rec = recall_score(y_test, y_pred, average='weighted')
         f1 = f1_score(y_test, y_pred, average='weighted')
         
-        mlflow.log_param("n_estimators", n_estimators)
-        mlflow.log_param("max_depth", max_depth)
-        mlflow.log_param("random_state", random_state)
-        
         mlflow.log_metric("accuracy", acc)
         mlflow.log_metric("precision", prec)
         mlflow.log_metric("recall", rec)
         mlflow.log_metric("f1_score", f1)
         
-        # Simpan model artifact
-        mlflow.sklearn.log_model(model, name="model")
+        # Log model ke DagsHub
+        try:
+            mlflow.sklearn.log_model(model, artifact_path="model")
+        except Exception:
+            mlflow.sklearn.log_model(model, name="model")
+        
+        # Simpan juga model ke folder lokal untuk Docker Build
+        local_model_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "local_model")
+        if os.path.exists(local_model_path):
+            shutil.rmtree(local_model_path)
+        mlflow.sklearn.save_model(model, local_model_path)
         
         print(f"✅ Retraining CI Selesai! Run ID: {run_id} | Accuracy: {acc:.4f}")
 

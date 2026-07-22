@@ -28,7 +28,7 @@ jobs:
       - name: Run MLflow Project (Retrain Model)
         run: |
           cd Workflow-CI/MLProject
-          mlflow run . --env-manager=local
+          mlflow run . --env-manager local
 
       - name: Upload Artifacts to GitHub
         uses: actions/upload-artifact@v4
@@ -53,13 +53,14 @@ jobs:
         run: |
           if [ -z "$DOCKERHUB_USERNAME" ]; then
             echo "Notice: DOCKERHUB_USERNAME secret is not configured in GitHub Repository Secrets."
-            echo "Skipping Docker image build & push."
+            echo "Building Docker image locally to verify..."
+            mlflow models build-docker -m "Workflow-CI/MLProject/local_model" -n "obesity-ml-model:latest"
           else
-            RUN_ID=$(cat Workflow-CI/MLProject/run_id.txt)
             DOCKER_IMAGE="${DOCKERHUB_USERNAME}/obesity-ml-model:latest"
+            echo "Building Docker image from local model..."
             
-            echo "Building Docker image for Run ID: $RUN_ID"
-            mlflow models build-docker -m "runs:/$RUN_ID/model" -n "$DOCKER_IMAGE"
+            # Build Docker langsung dari folder local_model
+            mlflow models build-docker -m "Workflow-CI/MLProject/local_model" -n "$DOCKER_IMAGE"
             
             echo "Pushing Docker image to Docker Hub..."
             docker push "$DOCKER_IMAGE"
