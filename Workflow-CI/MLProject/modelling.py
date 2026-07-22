@@ -6,17 +6,35 @@ import numpy as np
 import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
+import seaborn as sns
 
 import mlflow
 import mlflow.sklearn
-import dagshub
 from sklearn.ensemble import RandomForestClassifier
-from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score
+from sklearn.metrics import (
+    accuracy_score,
+    precision_score,
+    recall_score,
+    f1_score,
+    confusion_matrix,
+    classification_report
+)
+
+# Izinkan file store lokal jika fallback digunakan
+os.environ["MLFLOW_ALLOW_FILE_STORE"] = "true"
 
 DAGSHUB_USERNAME = "Blckjackk"
 DAGSHUB_REPO_NAME = "Eksperimen_SML_ahmad_izzuddin_azzam"
 
 def setup_mlflow():
+    """
+    Menyiapkan MLflow tracking URI & experiment secara aman tanpa konflik MLFLOW_RUN_ID.
+    """
+    # Bersihkan env vars yang di-set oleh 'mlflow run' CLI wrapper agar tidak conflict experiment
+    os.environ.pop("MLFLOW_RUN_ID", None)
+    os.environ.pop("MLFLOW_EXPERIMENT_ID", None)
+    os.environ.pop("MLFLOW_EXPERIMENT_NAME", None)
+
     token = os.getenv("MLFLOW_TRACKING_PASSWORD", os.getenv("DAGSHUB_TOKEN", ""))
     if token:
         os.environ['MLFLOW_TRACKING_USERNAME'] = DAGSHUB_USERNAME
@@ -25,21 +43,14 @@ def setup_mlflow():
         mlflow.set_tracking_uri(remote_uri)
         print(f"Tracking MLflow terhubung ke DagsHub Remote: {remote_uri}")
     else:
-        try:
-            dagshub.init(
-                repo_owner=DAGSHUB_USERNAME,
-                repo_name=DAGSHUB_REPO_NAME,
-                mlflow=True
-            )
-            print("Berhasil menginisialisasi DagsHub MLflow.")
-        except Exception as e:
-            print(f"Warning: Offline / Unauthenticated DagsHub ({e}). Menggunakan SQLite MLflow lokal.")
-            os.environ["MLFLOW_ALLOW_FILE_STORE"] = "true"
-            mlflow.set_tracking_uri("sqlite:///mlflow.db")
-            
+        # Fallback ke SQLite database lokal jika tidak ada token
+        mlflow.set_tracking_uri("sqlite:///mlflow.db")
+        print("Tracking MLflow menggunakan penyimpanan lokal (sqlite:///mlflow.db).")
+
     try:
         mlflow.set_experiment("CI_Retraining_Obesity")
-    except Exception:
+    except Exception as e:
+        print(f"Warning: Exception set_experiment ({e}). Falling back to sqlite:///mlflow.db")
         mlflow.set_tracking_uri("sqlite:///mlflow.db")
         mlflow.set_experiment("CI_Retraining_Obesity")
 
@@ -64,11 +75,22 @@ def main():
     with mlflow.start_run(run_name="CI_Automated_Retraining") as run:
         run_id = run.info.run_id
         
-        # Simpan Run ID
+        # Simpan Run ID ke file run_id.txt untuk CI step
         with open("run_id.txt", "w") as f:
             f.write(run_id)
             
-        model = RandomForestClassifier(n_estimators=100, max_depth=10, random_state=42)
+        print(f"Run ID berhasil dibuat: {run_id}")
+        
+        n_estimators = 100
+        max_depth = 10
+        random_state = 42
+        
+        print("Melatih model Random Forest (CI Retraining)...")
+        model = RandomForestClassifier(
+            n_estimators=n_estimators,
+            max_depth=max_depth,
+            random_state=random_state
+        )
         model.fit(X_train, y_train)
         
         y_pred = model.predict(X_test)
@@ -78,18 +100,22 @@ def main():
         rec = recall_score(y_test, y_pred, average='weighted')
         f1 = f1_score(y_test, y_pred, average='weighted')
         
+        mlflow.log_param("n_estimators", n_estimators)
+        mlflow.log_param("max_depth", max_depth)
+        mlflow.log_param("random_state", random_state)
+        
         mlflow.log_metric("accuracy", acc)
         mlflow.log_metric("precision", prec)
         mlflow.log_metric("recall", rec)
         mlflow.log_metric("f1_score", f1)
         
-        # Log model ke DagsHub
+        # Log model ke MLflow
         try:
-            mlflow.sklearn.log_model(model, artifact_path="model")
-        except Exception:
             mlflow.sklearn.log_model(model, name="model")
+        except Exception:
+            mlflow.sklearn.log_model(model, artifact_path="model")
         
-        # Simpan juga model ke folder lokal untuk Docker Build
+        # Simpan juga model ke folder local_model
         local_model_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "local_model")
         if os.path.exists(local_model_path):
             shutil.rmtree(local_model_path)
