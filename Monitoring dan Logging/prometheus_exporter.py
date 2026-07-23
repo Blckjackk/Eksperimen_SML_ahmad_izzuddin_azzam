@@ -20,12 +20,10 @@ from prometheus_client import (
 
 app = Flask(__name__)
 
-# --- INISIALISASI PROMETHEUS METRICS (10 METRIKS DENGAN METRIKS APLIKASI + METRIKS SISTEM) ---
 registry = CollectorRegistry()
 ProcessCollector(registry=registry)
 GCCollector(registry=registry)
 
-# 1. Custom Metric 1: Total HTTP Requests
 HTTP_REQUESTS_TOTAL = Counter(
     'http_requests_total',
     'Total number of HTTP requests received',
@@ -33,7 +31,6 @@ HTTP_REQUESTS_TOTAL = Counter(
     registry=registry
 )
 
-# 2. Custom Metric 2: Total Predictions Processed
 PREDICTION_COUNT_TOTAL = Counter(
     'prediction_count_total',
     'Total predictions processed per predicted class',
@@ -41,7 +38,6 @@ PREDICTION_COUNT_TOTAL = Counter(
     registry=registry
 )
 
-# 3. Custom Metric 3: Prediction Latency
 PREDICTION_LATENCY_SECONDS = Histogram(
     'prediction_latency_seconds',
     'Latency of model prediction responses in seconds',
@@ -50,7 +46,6 @@ PREDICTION_LATENCY_SECONDS = Histogram(
     registry=registry
 )
 
-# 4. Custom Metric 4: Prediction Error Count
 PREDICTION_ERROR_COUNT = Counter(
     'prediction_error_count',
     'Total prediction errors encountered',
@@ -58,14 +53,12 @@ PREDICTION_ERROR_COUNT = Counter(
     registry=registry
 )
 
-# 5. Custom Metric 5: Active Concurrent Requests
 ACTIVE_REQUESTS = Gauge(
     'active_requests',
     'Number of active concurrent requests being processed',
     registry=registry
 )
 
-# --- LOAD ATAU TRAIN MODEL MACHINE LEARNING DUMMY/SAVED ---
 MODEL = None
 CLASS_NAMES = [
     'Insufficient_Weight',
@@ -85,18 +78,18 @@ def load_or_train_model():
     if os.path.exists(local_model_path):
         try:
             MODEL = mlflow.sklearn.load_model(local_model_path)
-            print(f"✅ Model ML berhasil dimuat dari: {local_model_path}")
+            print(f"Loaded ML model from: {local_model_path}")
             return
         except Exception as e:
-            print(f"Warning: Gagal memuat model dari {local_model_path}: {e}")
+            print(f"Warning: Failed to load saved model from {local_model_path}: {e}")
             
-    print("Melatih model Random Forest fallback untuk Exporter...")
+    print("Training fallback Random Forest model for exporter service...")
     X_dummy = np.random.rand(100, 23)
     y_dummy = np.random.randint(0, 7, size=100)
     rf = RandomForestClassifier(n_estimators=10, random_state=42)
     rf.fit(X_dummy, y_dummy)
     MODEL = rf
-    print("✅ Model Fallback siap digerakkan.")
+    print("Fallback model trained and active.")
 
 load_or_train_model()
 
@@ -124,17 +117,14 @@ def predict():
     try:
         data = request.get_json(force=True, silent=True)
         if not data or 'features' not in data:
-            # Simulasi random feature jika request kosong
             features = np.random.rand(1, 23)
         else:
             features = np.array(data['features']).reshape(1, -1)
 
-        # Opsi simulasi error untuk pengujian alert error rate
         if data and data.get('simulate_error') is True:
             PREDICTION_ERROR_COUNT.labels(error_type="SimulatedException").inc()
             return jsonify({"error": "Simulated error during inference"}), 500
 
-        # Opsi simulasi high latency untuk pengujian alert latency (>2 detik)
         if data and data.get('simulate_delay'):
             delay = float(data.get('simulate_delay'))
             time.sleep(delay)
@@ -165,5 +155,5 @@ def metrics():
     return generate_latest(registry), 200, {'Content-Type': CONTENT_TYPE_LATEST}
 
 if __name__ == '__main__':
-    print("🚀 Running Prometheus Exporter ML Server di http://localhost:8000")
+    print("Running Prometheus Exporter ML Server on http://localhost:8000")
     app.run(host='0.0.0.0', port=8000, debug=False)
